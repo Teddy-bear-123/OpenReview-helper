@@ -1,4 +1,4 @@
-This repo is made for Area Chairs for conferences that use OpenReview.  
+This repo is made for Area Chairs of conferences that use OpenReview.  
 Tired of having to manually copy ratings from OpenReview to your tracker spreadsheet?  
 **Tire no more!**
 
