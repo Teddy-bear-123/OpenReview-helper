@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from tqdm import tqdm
+from utils import run_with_timeout
 
 
 @dataclass
@@ -51,6 +52,7 @@ class ORAPI:
         self.driver = webdriver.Firefox(options=options)
 
         self._login(self._get_url(conf))
+        self.conf = conf
 
     def __del__(self):
         self.driver.quit()
@@ -78,14 +80,49 @@ class ORAPI:
 
         # Wait for page to load, get urls to all papers.
         print("Waiting for page to finish loading...")
-        while True:
-            urls = self.driver.find_elements(By.XPATH, "//div[@class='note']/h4/a")
-            urls = [url.get_attribute("href") for url in urls]
-            if urls:
-                break
-        print("Logged in.")
-        print(f"Found {len(urls)} submissions.")
+
+        def load_page(driver):
+            while True:
+                urls = driver.find_elements(By.XPATH, "//div[@class='note']/h4/a")
+                urls = [url.get_attribute("href") for url in urls]
+                if urls:
+                    break
+            print("Logged in.")
+            print(f"Found {len(urls)} submissions.")
+            return urls
+
+        urls = run_with_timeout(load_page, (self.driver,), timeout_duration=5, default_output=[])
         self.paper_urls = urls
+
+    def parse_rating(self, reviews):
+        """Parse ratings from reviews, based on the conference."""
+        ratings, confidences = [], []
+
+        for reply in reviews:
+            content = reply.text
+            rating, confidence = None, None
+
+            if "iclr" in self.conf:
+                rating_start = content.find("Rating: ")
+                if rating_start > 0:
+                    confidence_start = content.find("Confidence: ")
+                    code_start = content.find("Code Of Conduct: ")
+                    rating = int(content[rating_start:confidence_start].split(":")[1].strip())
+                    confidence = int(content[confidence_start:code_start].split(":")[1].strip())
+
+            elif "cvpr" in self.conf:
+                rating_start = content.find("Overall Recommendation: ")
+                if rating_start > 0:
+                    just_start = content.find("Justification ")
+                    conf_start = content.find("Confidence Level: ")
+                    rating = int(content[rating_start:just_start].split(":")[1].strip())
+                    confidence = int(content[conf_start:].split(":")[1].strip())
+
+            if rating is not None and confidence is not None:
+                ratings.append(rating)
+                confidences.append(confidence)
+
+        return ratings, confidences
 
     def load_submission(self, url: str, skip_reviews: bool = False) -> Submission:
         """Navigate to submission link and parse info.
@@ -104,35 +141,25 @@ class ORAPI:
 
         # Get submission title and ID.
         title = self.driver.find_element(By.CLASS_NAME, "citation_title").text
-        content = self.driver.find_element(
-            By.XPATH, "//div[@class='forum-note']/div[@class='note-content']").text
+        content = self.driver.find_element(By.XPATH, "//div[@class='forum-note']/div[@class='note-content']").text
         sub_id = content.split("Number:")[1].strip()
 
         # Get replies.
-        if skip_reviews:
-            replies = []
-        else:
+        def load_page(driver):
             while True:
                 # Keep trying until page loads...
-                replies = self.driver.find_element(
-                    By.ID, "forum-replies").find_elements(By.CLASS_NAME, "depth-odd")
+                replies = driver.find_element(By.ID, "forum-replies").find_elements(By.CLASS_NAME, "depth-odd")
                 if replies:
                     break
+            return replies
+
+        if skip_reviews:
+            reviews = []
+        else:
+            reviews = run_with_timeout(load_page, (self.driver,), timeout_duration=5, default_output=[])
 
         # Get ratings and confidences from each valid rating.
-        ratings, confidences = [], []
-        for reply in replies:
-            content = reply.text
-            rating_start = content.find("Rating: ")
-            if rating_start > 0:
-                confidence_start = content.find("Confidence: ")
-                code_start = content.find("Code Of Conduct: ")
-                rating = int(
-                    content[rating_start:confidence_start].split(":")[1].strip())
-                confidence = int(
-                    content[confidence_start:code_start].split(":")[1].strip())
-                ratings.append(rating)
-                confidences.append(confidence)
+        ratings, confidences = self.parse_rating(reviews)
 
         return Submission(title, sub_id, ratings, confidences)
 
