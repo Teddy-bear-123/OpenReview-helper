@@ -1,5 +1,7 @@
 import argparse
 import os
+import random
+import string
 from dataclasses import dataclass
 
 import numpy as np
@@ -22,6 +24,9 @@ class Submission:
     confidences: list[int]  # List of reviewer confidences.
 
     def __repr__(self) -> str:
+        return f"Submission({self.sub_id}, {self.title}, {self.ratings}, {self.confidences})"
+
+    def __str__(self) -> str:
         return f"{self.sub_id}, {self.title}, {int_list_to_str(self.ratings)}"
 
     def info(self) -> str:
@@ -172,10 +177,18 @@ class ORAPI:
 
 def print_csv(subs: list[Submission]):
     """Basic print as CSV."""
-    print("-" * 32 + " CSV " + "-" * 32)
+    output = ""
+    max_len = 0
     for idx, sub in enumerate(subs):
-        print(f"{idx + 1}, {sub}")
-    print("-" * 69)
+        line = f"{idx + 1}, {str(sub)}"
+        output += line + "\n"
+        max_len = max(max_len, len(line))
+
+    left = (max_len - 5) // 2
+    right = max_len - 5 - left
+    print("-" * left + " CSV " + "-" * right)
+    print(output.rstrip("\n"))
+    print("-" * max_len)
 
 
 def print_rich(subs: list[Submission]):
@@ -212,6 +225,8 @@ def parse_args() -> argparse.Namespace:
                         help="Skip reviews? Select if no reviews are in yet.")
     parser.add_argument("--conf", type=str,
                         default="iclr_2025", choices=list(ORAPI.conf_to_url.keys()))
+    parser.add_argument("--simulate", action="store_true",
+                        help="Simulate the process.")
     args = parser.parse_args()
     return args
 
@@ -219,9 +234,20 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    # Initialize API object and get all info.
-    obj = ORAPI(conf=args.conf, headless=args.headless)
-    subs = obj.load_all_submissions(args.skip_reviews)
+    if args.simulate:
+        subs = []
+        for _ in range(5):
+            ratings = [random.choice(range(1, 5 + 1)) for _ in range(random.randint(0, 3))]
+            subs.append(Submission(
+                title="Title " + random.choice(string.ascii_uppercase),
+                sub_id=str(random.choice(range(1000, 9999 + 1))),
+                ratings=ratings,
+                confidences=[random.choice(range(1, 5 + 1)) for _ in range(len(ratings))],
+            ))
+    else:
+        # Initialize API object and get all info.
+        obj = ORAPI(conf=args.conf, headless=args.headless)
+        subs = obj.load_all_submissions(args.skip_reviews)
 
     # Print info.
     print_rich(subs)
