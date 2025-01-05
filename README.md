@@ -2,6 +2,12 @@ This repo is made for Area Chairs of conferences that use OpenReview.
 Tired of having to manually copy ratings from OpenReview to your tracker spreadsheet?  
 **Tire no more!**
 
+This repo will render a summary of the papers in your AC batch:  
+<img src="demo.png" alt="Sample output" width="500"/>
+
+
+
+
 ### Step 0:
 Create a virtualenv, install dependencies.
 ```bash
