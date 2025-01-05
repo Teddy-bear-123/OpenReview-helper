@@ -4,10 +4,13 @@ from dataclasses import dataclass
 
 import numpy as np
 from dotenv import load_dotenv
+from rich.console import Console
+from rich.table import Table
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from tqdm import tqdm
-from utils import run_with_timeout
+
+from utils import int_list_to_str, mean, run_with_timeout
 
 
 @dataclass
@@ -19,9 +22,7 @@ class Submission:
     confidences: list[int]  # List of reviewer confidences.
 
     def __repr__(self) -> str:
-        ratings = [str(item) for item in self.ratings]
-        ratings = ", ".join(ratings)
-        return f"{self.sub_id}, {self.title}, {ratings}"
+        return f"{self.sub_id}, {self.title}, {int_list_to_str(self.ratings)}"
 
     def info(self) -> str:
         return f"ID: {self.sub_id}, {self.title}, " + \
@@ -81,7 +82,7 @@ class ORAPI:
         # Wait for page to load, get urls to all papers.
         print("Waiting for page to finish loading...")
 
-        def load_page(driver):
+        def load_landing_page(driver):
             while True:
                 urls = driver.find_elements(By.XPATH, "//div[@class='note']/h4/a")
                 urls = [url.get_attribute("href") for url in urls]
@@ -91,10 +92,10 @@ class ORAPI:
             print(f"Found {len(urls)} submissions.")
             return urls
 
-        urls = run_with_timeout(load_page, (self.driver,), timeout_duration=5, default_output=[])
+        urls = run_with_timeout(load_landing_page, (self.driver,), timeout_duration=5, default_output=[])
         self.paper_urls = urls
 
-    def parse_rating(self, reviews):
+    def _parse_rating(self, reviews):
         """Parse ratings from reviews, based on the conference."""
         ratings, confidences = [], []
 
@@ -145,7 +146,7 @@ class ORAPI:
         sub_id = content.split("Number:")[1].strip()
 
         # Get replies.
-        def load_page(driver):
+        def load_reviews(driver):
             while True:
                 # Keep trying until page loads...
                 replies = driver.find_element(By.ID, "forum-replies").find_elements(By.CLASS_NAME, "depth-odd")
@@ -156,17 +157,51 @@ class ORAPI:
         if skip_reviews:
             reviews = []
         else:
-            reviews = run_with_timeout(load_page, (self.driver,), timeout_duration=5, default_output=[])
+            reviews = run_with_timeout(load_reviews, (self.driver,), timeout_duration=5, default_output=[])
 
         # Get ratings and confidences from each valid rating.
-        ratings, confidences = self.parse_rating(reviews)
+        ratings, confidences = self._parse_rating(reviews)
 
         return Submission(title, sub_id, ratings, confidences)
 
-    def load_all_submissions(self, skip_reviews: bool = False):
+    def load_all_submissions(self, skip_reviews: bool = False) -> list[Submission]:
         """Get all submission info."""
         subs = [self.load_submission(paper_url, skip_reviews) for paper_url in tqdm(self.paper_urls)]
         return subs
+
+
+def print_csv(subs: list[Submission]):
+    """Basic print as CSV."""
+    print("-" * 32 + " CSV " + "-" * 32)
+    for idx, sub in enumerate(subs):
+        print(f"{idx + 1}, {sub}")
+    print("-" * 69)
+
+
+def print_rich(subs: list[Submission]):
+    """Pretty print table."""
+
+    console = Console()
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("#", justify="right")
+    table.add_column("ID", justify="right")
+    table.add_column("Title", justify="left")
+    table.add_column("Ratings", justify="right")
+    table.add_column("Avg.", justify="right")
+    table.add_column("Confidences", justify="right")
+
+    for idx, sub in enumerate(subs):
+        table.add_row(
+            f"{idx + 1}",
+            sub.sub_id,
+            sub.title,
+            int_list_to_str(sub.ratings),
+            mean(sub.ratings),
+            int_list_to_str(sub.confidences)
+        )
+
+    console.print(table)
 
 
 def parse_args() -> argparse.Namespace:
@@ -189,8 +224,8 @@ def main() -> None:
     subs = obj.load_all_submissions(args.skip_reviews)
 
     # Print info.
-    for idx, sub in enumerate(subs):
-        print(f"{idx + 1}, {sub}")
+    print_rich(subs)
+    print_csv(subs)
 
 
 if __name__ == "__main__":

@@ -24,3 +24,15 @@ def run_with_timeout(func, args=(), kwargs={}, timeout_duration=10, default_outp
     # Cancel the alarm.
     signal.alarm(0)
     return result
+
+
+def int_list_to_str(ints: list[int]) -> str:
+    return ", ".join([str(item) for item in ints])
+
+
+def mean(values: list[int | float], prec: int = 2) -> str:
+    if not values:
+        return "-"
+
+    mean_val = sum(values) / len(values)
+    return f"{mean_val:.{prec}f}"
