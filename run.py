@@ -12,7 +12,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from tqdm import tqdm
 
-from utils import int_list_to_str, mean, run_with_timeout
+from utils import int_list_to_str, mean, run_with_timeout, std
 
 
 @dataclass
@@ -202,6 +202,7 @@ def print_rich(subs: list[Submission]):
     table.add_column("Title", justify="left")
     table.add_column("Ratings", justify="right")
     table.add_column("Avg.", justify="right")
+    table.add_column("Std.", justify="right")
     table.add_column("Confidences", justify="right")
 
     for idx, sub in enumerate(subs):
@@ -211,6 +212,7 @@ def print_rich(subs: list[Submission]):
             sub.title,
             int_list_to_str(sub.ratings),
             mean(sub.ratings),
+            std(sub.ratings),
             int_list_to_str(sub.confidences)
         )
 
@@ -240,7 +242,7 @@ def main() -> None:
             ratings = [random.choice(range(1, 5 + 1)) for _ in range(random.randint(0, 3))]
             subs.append(Submission(
                 title="Title " + random.choice(string.ascii_uppercase),
-                sub_id=str(random.choice(range(1000, 9999 + 1))),
+                sub_id=str(random.choice(range(1000, 20000))),
                 ratings=ratings,
                 confidences=[random.choice(range(1, 5 + 1)) for _ in range(len(ratings))],
             ))

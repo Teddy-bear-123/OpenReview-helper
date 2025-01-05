@@ -1,5 +1,7 @@
 import signal
 
+import numpy as np
+
 
 class TimeoutExpired(Exception):
     pass
@@ -36,3 +38,11 @@ def mean(values: list[int | float], prec: int = 2) -> str:
 
     mean_val = sum(values) / len(values)
     return f"{mean_val:.{prec}f}"
+
+
+def std(values: list[int | float], prec: int = 2) -> str:
+    if not values:
+        return "-"
+
+    std_val = np.std(values)
+    return f"{std_val:.{prec}f}"
