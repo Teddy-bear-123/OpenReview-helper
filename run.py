@@ -119,7 +119,7 @@ class ORAPI:
             elif "cvpr" in self.conf:
                 rating_start = content.find("Overall Recommendation: ")
                 if rating_start > 0:
-                    just_start = content.find("Justification ")
+                    just_start = content.find("Justification For Recommendation And Suggestions For Rebuttal: ")
                     conf_start = content.find("Confidence Level: ")
                     rating = int(content[rating_start:just_start].split(":")[1].strip())
                     confidence = int(content[conf_start:].split(":")[1].strip())
