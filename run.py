@@ -14,6 +14,8 @@ from tqdm import tqdm
 
 from utils import int_list_to_str, mean, run_with_timeout, std
 
+TIMEOUT_DURATION = 6
+
 
 @dataclass
 class Submission:
@@ -22,12 +24,13 @@ class Submission:
     sub_id: str  # Paper ID.
     ratings: list[int]  # List of reviewer ratings.
     confidences: list[int]  # List of reviewer confidences.
+    final_ratings: list[int]  # List of final reviewer ratings.
 
     def __repr__(self) -> str:
         return f"Submission({self.sub_id}, {self.title}, {self.ratings}, {self.confidences})"
 
     def __str__(self) -> str:
-        return f"{self.sub_id}, {self.title}, {int_list_to_str(self.ratings)}"
+        return f"{self.sub_id}, {self.title}, *, {int_list_to_str(self.ratings)}, *,  {int_list_to_str(self.final_ratings)}"
 
     def info(self) -> str:
         return f"ID: {self.sub_id}, {self.title}, " + \
@@ -97,16 +100,21 @@ class ORAPI:
             print(f"Found {len(urls)} submissions.")
             return urls
 
-        urls = run_with_timeout(load_landing_page, (self.driver,), timeout_duration=5, default_output=[])
+        urls = run_with_timeout(
+            load_landing_page,
+            (self.driver,),
+            timeout_duration=TIMEOUT_DURATION,
+            default_output=[]
+        )
         self.paper_urls = urls
 
     def _parse_rating(self, reviews):
         """Parse ratings from reviews, based on the conference."""
-        ratings, confidences = [], []
+        ratings, final_ratings, confidences = [], [], []
 
         for reply in reviews:
             content = reply.text
-            rating, confidence = None, None
+            rating, final_rating, confidence = None, None, None
 
             if "iclr" in self.conf:
                 rating_start = content.find("Rating: ")
@@ -123,12 +131,18 @@ class ORAPI:
                     conf_start = content.find("Confidence Level: ")
                     rating = int(content[rating_start:just_start].split(":")[1].strip())
                     confidence = int(content[conf_start:].split(":")[1].strip())
+                    final_rating_start = content.find("Final Rating:")
+                    final_rating_end = content.find("Final Rating Justification:")
+                    if final_rating_start > 0:
+                        final_rating = int(content[final_rating_start:final_rating_end].split(":")[1].strip())
 
             if rating is not None and confidence is not None:
                 ratings.append(rating)
                 confidences.append(confidence)
+                if final_rating is not None:
+                    final_ratings.append(final_rating)
 
-        return ratings, confidences
+        return ratings, confidences, final_ratings
 
     def load_submission(self, url: str, skip_reviews: bool = False) -> Submission:
         """Navigate to submission link and parse info.
@@ -162,12 +176,17 @@ class ORAPI:
         if skip_reviews:
             reviews = []
         else:
-            reviews = run_with_timeout(load_reviews, (self.driver,), timeout_duration=5, default_output=[])
+            reviews = run_with_timeout(
+                load_reviews,
+                (self.driver,),
+                timeout_duration=TIMEOUT_DURATION,
+                default_output=[]
+            )
 
         # Get ratings and confidences from each valid rating.
-        ratings, confidences = self._parse_rating(reviews)
+        ratings, confidences, final_ratings = self._parse_rating(reviews)
 
-        return Submission(title, sub_id, ratings, confidences)
+        return Submission(title, sub_id, ratings, confidences, final_ratings)
 
     def load_all_submissions(self, skip_reviews: bool = False) -> list[Submission]:
         """Get all submission info."""
@@ -204,6 +223,9 @@ def print_rich(subs: list[Submission]):
     table.add_column("Avg.", justify="right")
     table.add_column("Std.", justify="right")
     table.add_column("Confidences", justify="right")
+    table.add_column("Final Ratings", justify="right")
+    table.add_column("Avg.", justify="right")
+    table.add_column("Std.", justify="right")
 
     for idx, sub in enumerate(subs):
         table.add_row(
@@ -213,7 +235,10 @@ def print_rich(subs: list[Submission]):
             int_list_to_str(sub.ratings),
             mean(sub.ratings),
             std(sub.ratings),
-            int_list_to_str(sub.confidences)
+            int_list_to_str(sub.confidences),
+            int_list_to_str(sub.final_ratings),
+            mean(sub.final_ratings),
+            std(sub.final_ratings),
         )
 
     console.print(table)
@@ -240,11 +265,13 @@ def main() -> None:
         subs = []
         for _ in range(5):
             ratings = [random.choice(range(1, 5 + 1)) for _ in range(random.randint(0, 3))]
+            final_ratings = [random.choice(range(1, 5 + 1)) for _ in range(random.randint(0, 3))]
             subs.append(Submission(
                 title="Title " + random.choice(string.ascii_uppercase),
                 sub_id=str(random.choice(range(1000, 20000))),
                 ratings=ratings,
                 confidences=[random.choice(range(1, 5 + 1)) for _ in range(len(ratings))],
+                final_ratings=final_ratings
             ))
     else:
         # Initialize API object and get all info.

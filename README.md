@@ -6,7 +6,7 @@ This repo will render a summary of the papers in your AC batch:
 <img src="demo.png" alt="Sample output" width="500"/>
 
 
-**Try it in Google Colab -** [link](https://colab.research.google.com/drive/1wv1ayx1f0TScy7_IWFmNJMPx84El9wr4?usp=sharing)
+<!-- **Try it in Google Colab -** [link](https://colab.research.google.com/drive/1wv1ayx1f0TScy7_IWFmNJMPx84El9wr4?usp=sharing) -->
 
 Or locally,
 ### Step 0:

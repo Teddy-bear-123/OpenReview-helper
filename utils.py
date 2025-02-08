@@ -29,7 +29,10 @@ def run_with_timeout(func, args=(), kwargs={}, timeout_duration=10, default_outp
 
 
 def int_list_to_str(ints: list[int]) -> str:
-    return ", ".join([str(item) for item in ints])
+    output = ", ".join([str(item) for item in ints])
+    if not output:
+        output = "-"
+    return output
 
 
 def mean(values: list[int | float], prec: int = 2) -> str:
