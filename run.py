@@ -30,7 +30,7 @@ class Submission:
         return f"Submission({self.sub_id}, {self.title}, {self.ratings}, {self.confidences})"
 
     def __str__(self) -> str:
-        return f"{self.sub_id}, {self.title}, *, {int_list_to_str(self.ratings)}, *,  {int_list_to_str(self.final_ratings)}"
+        return f"{self.sub_id}, {self.title}, *, {int_list_to_str(self.ratings)}, *, {int_list_to_str(self.final_ratings)}"
 
     def info(self) -> str:
         return f"ID: {self.sub_id}, {self.title}, " + \
