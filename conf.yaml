@@ -1,0 +1,58 @@
+conferences:
+  iclr_2025:
+    url: 'https://openreview.net/group?id=ICLR.cc/2025/Conference/Area_Chairs'
+    rating:
+      start_text: 'Rating: '
+      end_text: 'Confidence: '
+      extract_method: 'first_number' # Extract first number found after start_text
+    confidence:
+      start_text: 'Confidence: '
+      end_text: 'Code Of Conduct: '
+      extract_method: 'first_number'
+    final_rating:
+      start_text: null # No final rating for ICLR
+      end_text: null
+      extract_method: null
+
+  cvpr_2025:
+    url: 'https://openreview.net/group?id=thecvf.com/CVPR/2025/Conference/Area_Chairs'
+    rating:
+      start_text: 'Overall Recommendation: '
+      end_text: 'Justification For Recommendation And Suggestions For Rebuttal: '
+      extract_method: 'first_number'
+    confidence:
+      start_text: 'Confidence Level: '
+      end_text: null # Extract until end of line or next section
+      extract_method: 'first_number'
+    final_rating:
+      start_text: 'Final Rating:'
+      end_text: 'Final Rating Justification:'
+      extract_method: 'first_number'
+
+  # Example for a new conference
+  example_conference_2025:
+    url: 'https://openreview.net/group?id=example.com/Conference/2025/Area_Chairs'
+    ##############################################################################
+    # Each Parameter
+    # Rating ( Also sometimes called Recomedation / Overall Recommendation )
+    # Confidence ( Also sometimes called Confidence Level )
+    # Final Rating ( Sometimes called Final Recommendation )
+    #
+    # Extract Method
+    #
+    # first_number: Extracts the first number found after start_text
+    #   If the end_text is null, it uses the next section or end of line
+    ##############################################################################
+
+    rating:
+      start_text: 'Rating: '
+      end_text: 'Confidence: '
+      extract_method: 'first_number'
+    confidence:
+      start_text: 'Confidence: '
+      end_text: null # Extract until end of line or next section
+      extract_method: 'first_number'
+    final_rating:
+      start_text: 'Final Rating:'
+      end_text: 'Final Comments:'
+      extract_method: 'first_number'

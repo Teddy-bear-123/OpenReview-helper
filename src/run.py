@@ -1,0 +1,424 @@
+import argparse
+import os
+import re
+import secrets
+import string
+from dataclasses import dataclass
+from typing import Any, Optional
+
+import numpy as np
+import yaml  # type: ignore
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.table import Table
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from tqdm import tqdm
+from utils import int_list_to_str, mean, run_with_timeout, std
+
+TIMEOUT_DURATION = 6
+CONFIG_FILE = "./conf.yaml"
+
+
+@dataclass
+class ConferenceConfig:
+    """Configuration for a specific conference."""
+
+    url: str
+    rating_config: dict[str, Any]
+    confidence_config: dict[str, Any]
+    final_rating_config: dict[str, Any]
+
+
+@dataclass
+class Submission:
+    """Class containing submission details."""
+
+    title: str  # Title.
+    sub_id: str  # Paper ID.
+    ratings: list[int]  # List of reviewer ratings.
+    confidences: list[int]  # List of reviewer confidences.
+    final_ratings: list[int]  # List of final reviewer ratings.
+
+    def __repr__(self) -> str:
+        return f"Submission({self.sub_id}, {self.title}, {self.ratings}, {self.confidences})"
+
+    def __str__(self) -> str:
+        return f"{self.sub_id}, {self.title}, *, {int_list_to_str(self.ratings)}, *, {int_list_to_str(self.final_ratings)}"
+
+    def info(self) -> str:
+        return (
+            f"ID: {self.sub_id}, {self.title}, "
+            + f"Ratings: {self.ratings}, "
+            + f"Avg: {np.mean(self.ratings):.2f}, "
+            + f"Var: {np.var(self.ratings):.2f}"
+        )
+
+
+class ConfigLoader:
+    """Loads and manages conference configurations."""
+
+    def __init__(self, config_file: str = CONFIG_FILE):
+        self.config_file = config_file
+        self.configs = self._load_configs()
+
+    def _load_configs(self) -> dict[str, ConferenceConfig]:
+        """Load configurations from YAML file."""
+        if not os.path.exists(self.config_file):
+            raise FileNotFoundError(f"Configuration file {self.config_file} not found!")
+
+        with open(self.config_file) as f:
+            data = yaml.safe_load(f)
+
+        configs = {}
+        for conf_name, conf_data in data["conferences"].items():
+            configs[conf_name] = ConferenceConfig(
+                url=conf_data["url"],
+                rating_config=conf_data["rating"],
+                confidence_config=conf_data["confidence"],
+                final_rating_config=conf_data["final_rating"],
+            )
+
+        return configs
+
+    def get_config(self, conf_name: str) -> ConferenceConfig:
+        """Get configuration for a specific conference."""
+        if conf_name not in self.configs:
+            raise ValueError(
+                f"Conference '{conf_name}' not found in configuration. Available: {list(self.configs.keys())}"
+            )
+        return self.configs[conf_name]
+
+    def list_conferences(self) -> list[str]:
+        """List all available conferences."""
+        return list(self.configs.keys())
+
+
+class TextExtractor:
+    """Utility class for extracting values from text based on configuration."""
+
+    @staticmethod
+    def extract_first_number(
+        text: str, start_text: str, end_text: Optional[str] = None
+    ) -> Optional[int]:
+        """Extract the first number found after start_text."""
+        start_idx = text.find(start_text)
+        if start_idx == -1:
+            return None
+
+        search_start = start_idx + len(start_text)
+
+        if end_text:
+            end_idx = text.find(end_text, search_start)
+            if end_idx == -1:
+                search_text = text[search_start:]
+            else:
+                search_text = text[search_start:end_idx]
+        else:
+            search_text = text[search_start:]
+
+        match = re.search(r"\d+", search_text)
+        if match:
+            return int(match.group())
+
+        return None
+
+    @staticmethod
+    def extract_value(text: str, config: dict[str, Any]) -> Optional[int]:
+        """Extract value based on configuration."""
+        if not config or not config.get("start_text"):
+            return None
+
+        method = config.get("extract_method", "first_number")
+
+        if method == "first_number":
+            return TextExtractor.extract_first_number(
+                text, config["start_text"], config.get("end_text")
+            )
+
+        return None
+
+
+class ORAPI:
+    def __init__(
+        self, conf: str, headless: bool = True, config_file: str = CONFIG_FILE
+    ):
+        """Initializes the OpenReviewAPI.
+
+        Args:
+        conf (str): Name of the conference.
+        headless (bool): Run without opening a browser window if True.
+        config_file (str): Path to configuration file.
+        """
+        # Load configuration
+        self.config_loader = ConfigLoader(config_file)
+        self.conf_config = self.config_loader.get_config(conf)
+        self.conf = conf
+
+        # Create webdriver.
+        options = webdriver.FirefoxOptions()
+        if headless:
+            options.add_argument("--headless")
+        self.driver = webdriver.Firefox(options=options)
+
+        self._login(self.conf_config.url)
+
+    def __del__(self) -> None:
+        if hasattr(self, "driver"):
+            self.driver.quit()
+
+    def _login(self, url: str) -> None:
+        # Load username and password.
+        load_dotenv()
+        username = os.environ["USERNAME"]
+        password = os.environ["PASSWORD"]
+
+        # Log in and navigate to url.
+        print(f"Opening {url}")
+        self.driver.get(url)
+        self.driver.find_element(By.ID, "email-input").send_keys(username)
+        self.driver.find_element(By.ID, "password-input").send_keys(password)
+        self.driver.find_element(By.CLASS_NAME, "btn-login").click()
+        print("Logging in.")
+
+        # Wait for page to load, get urls to all papers.
+        print("Waiting for page to finish loading...")
+
+        def load_landing_page(driver: webdriver.Firefox) -> list[str | None]:
+            while True:
+                elements = driver.find_elements(By.XPATH, "//div[@class='note']/h4/a")
+                urls = [
+                    url.get_attribute("href")
+                    for url in elements
+                    if url.get_attribute("href") is not None
+                ]
+                if urls:
+                    break
+            print("Logged in.")
+            print(f"Found {len(urls)} submissions.")
+            return urls
+
+        urls = run_with_timeout(
+            load_landing_page,
+            (self.driver,),
+            timeout_duration=TIMEOUT_DURATION,
+            default_output=[],
+        )
+        self.paper_urls = urls
+
+    def _parse_rating(
+        self, reviews: list[Any]
+    ) -> tuple[list[int], list[int], list[int]]:
+        """Parse ratings from reviews using configuration."""
+        ratings, final_ratings, confidences = [], [], []
+
+        for reply in reviews:
+            content = reply.text
+
+            rating = TextExtractor.extract_value(
+                content, self.conf_config.rating_config
+            )
+            confidence = TextExtractor.extract_value(
+                content, self.conf_config.confidence_config
+            )
+            final_rating = TextExtractor.extract_value(
+                content, self.conf_config.final_rating_config
+            )
+
+            if rating is not None and confidence is not None:
+                ratings.append(rating)
+                confidences.append(confidence)
+                if final_rating is not None:
+                    final_ratings.append(final_rating)
+
+        return ratings, confidences, final_ratings
+
+    def load_submission(self, url: str, skip_reviews: bool = False) -> Submission:
+        """Navigate to submission link and parse info.
+
+        Args:
+        url (str): URL to submission.
+        skip_reviews (bool): Skip looking for reviews and ratings?
+
+        Returns:
+        Instance of Submission().
+        """
+
+        # Open url.
+        self.driver.get(url)
+
+        # Get submission title and ID.
+        title = self.driver.find_element(By.CLASS_NAME, "citation_title").text
+        content = self.driver.find_element(
+            By.XPATH, "//div[@class='forum-note']/div[@class='note-content']"
+        ).text
+        sub_id = content.split("Number:")[1].strip()
+
+        # Get replies.
+        def load_reviews(driver: webdriver.Firefox) -> list[Any]:
+            while True:
+                # Keep trying until page loads...
+                replies = driver.find_element(By.ID, "forum-replies").find_elements(
+                    By.CLASS_NAME, "depth-odd"
+                )
+                if replies:
+                    break
+            return replies  # type: ignore
+
+        if skip_reviews:
+            reviews = []
+        else:
+            reviews = run_with_timeout(
+                load_reviews,
+                (self.driver,),
+                timeout_duration=TIMEOUT_DURATION,
+                default_output=[],
+            )
+
+        # Get ratings and confidences from each valid rating.
+        ratings, confidences, final_ratings = self._parse_rating(reviews)
+
+        return Submission(title, sub_id, ratings, confidences, final_ratings)
+
+    def load_all_submissions(self, skip_reviews: bool = False) -> list[Submission]:
+        """Get all submission info."""
+        subs = [
+            self.load_submission(paper_url, skip_reviews)
+            for paper_url in tqdm(self.paper_urls)
+        ]
+        return subs
+
+
+def print_csv(subs: list[Submission]) -> None:
+    """Basic print as CSV."""
+    output = ""
+    max_len = 0
+    for idx, sub in enumerate(subs):
+        line = f"{idx + 1}, {str(sub)}"
+        output += line + "\n"
+        max_len = max(max_len, len(line))
+
+    left = (max_len - 5) // 2
+    right = max_len - 5 - left
+    print("-" * left + " CSV " + "-" * right)
+    print(output.rstrip("\n"))
+    print("-" * max_len)
+
+
+def print_rich(subs: list[Submission]) -> None:
+    """Pretty print table."""
+
+    console = Console()
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("#", justify="right")
+    table.add_column("ID", justify="right")
+    table.add_column("Title", justify="left")
+    table.add_column("Ratings", justify="right")
+    table.add_column("Avg.", justify="right")
+    table.add_column("Std.", justify="right")
+    table.add_column("Confidences", justify="right")
+    table.add_column("Final Ratings", justify="right")
+    table.add_column("Avg.", justify="right")
+    table.add_column("Std.", justify="right")
+
+    for idx, sub in enumerate(subs):
+        table.add_row(
+            f"{idx + 1}",
+            sub.sub_id,
+            sub.title,
+            int_list_to_str(sub.ratings),
+            mean(sub.ratings),
+            std(sub.ratings),
+            int_list_to_str(sub.confidences),
+            int_list_to_str(sub.final_ratings),
+            mean(sub.final_ratings),
+            std(sub.final_ratings),
+        )
+
+    console.print(table)
+
+
+def parse_args() -> argparse.Namespace:
+    # Load available conferences from config
+    try:
+        config_loader = ConfigLoader()
+        available_confs = config_loader.list_conferences()
+    except FileNotFoundError:
+        print(f"Warning: {CONFIG_FILE} not found. Using default conferences.")
+        available_confs = ["iclr_2025", "cvpr_2025"]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--headless", action="store_true", help="Run in headless mode?")
+    parser.add_argument(
+        "--skip_reviews",
+        action="store_true",
+        help="Skip reviews? Select if no reviews are in yet.",
+    )
+    parser.add_argument(
+        "--conf",
+        type=str,
+        default=available_confs[0] if available_confs else "iclr_2025",
+        choices=available_confs,
+        help=f"Conference to scrape. Available: {', '.join(available_confs)}",
+    )
+    parser.add_argument("--simulate", action="store_true", help="Simulate the process.")
+    parser.add_argument(
+        "--config", type=str, default=CONFIG_FILE, help="Path to configuration file"
+    )
+    parser.add_argument(
+        "--list-conferences",
+        action="store_true",
+        help="List all available conferences and exit",
+    )
+
+    args = parser.parse_args()
+    return args
+
+
+def main() -> None:
+    args = parse_args()
+
+    # List conferences if requested
+    if args.list_conferences:
+        try:
+            config_loader = ConfigLoader(args.config)
+            conferences = config_loader.list_conferences()
+            print("Available conferences:")
+            for conf in conferences:
+                conf_config = config_loader.get_config(conf)
+                print(f"  - {conf}: {conf_config.url}")
+        except FileNotFoundError:
+            print(f"Configuration file {args.config} not found!")
+        return
+
+    if args.simulate:
+        subs = []
+        for _ in range(5):
+            ratings = [secrets.choice(range(1, 6)) for _ in range(secrets.randbelow(4))]
+            final_ratings = [
+                secrets.choice(range(1, 6)) for _ in range(secrets.randbelow(4))
+            ]
+            subs.append(
+                Submission(
+                    title="Title " + secrets.choice(string.ascii_uppercase),
+                    sub_id=str(secrets.randbelow(19000) + 1000),
+                    ratings=ratings,
+                    confidences=[
+                        secrets.choice(range(1, 5 + 1)) for _ in range(len(ratings))
+                    ],
+                    final_ratings=final_ratings,
+                )
+            )
+    else:
+        # Initialize API object and get all info.
+        obj = ORAPI(conf=args.conf, headless=args.headless, config_file=args.config)
+        subs = obj.load_all_submissions(args.skip_reviews)
+
+    # Print info.
+    print_rich(subs)
+    print_csv(subs)
+
+
+if __name__ == "__main__":
+    main()
