@@ -1,59 +1,72 @@
-This repo is made for Area Chairs of conferences that use OpenReview.  
-Tired of having to manually copy ratings from OpenReview to your tracker spreadsheet?  
-**Tire no more!**
+This repo automates the process of logging into OpenReview, gathering submission info, and printing it in a format that you can copy-paste into your tracker spreadsheet.
 
-This repo will render a summary of the papers in your AC batch:  
+This repo will render a summary of the papers in your AC batch:
 <img src="demo.png" alt="Sample output" width="500"/>
 
+## Prerequisites
 
-<!-- **Try it in Google Colab -** [link](https://colab.research.google.com/drive/1wv1ayx1f0TScy7_IWFmNJMPx84El9wr4?usp=sharing) -->
+* Python 3.10.0 or later ( verified to work with 3.10.0 )
+* [Firefox browser](https://www.mozilla.org/en-US/firefox/download) ( other browsers may work, but are untested and would require changes to the code )
+* geckodriver
+    * Install geckodriver using your package manager, or download it from [here](https://github.com/mozilla/geckodriver/releases)
+        - Or if you would preffer to use a package manager
+        ```bash
+        # Linux
+        sudo apt install firefox-geckodriver # Debian/Ubuntu
+        sudo dnf install firefox-geckodriver # Fedora/RHEL/CentOS
+        sudo pacman -S firefox-geckodriver # Arch Linux
+        nix-env -iA nixpkgs.firefox-geckodriver # NixOS
 
-Or locally,
-### Step 0:
+        # For MacOS
+        brew install geckodriver
+
+        # For Windows, download the geckodriver executable and add it to your PATH
+
+        ```
+## Usage
+
+### Step 0
+
 Create a virtualenv, install dependencies.
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate # On Windows, use .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Step 1:
+### Step 1
+
 Enter your OpenReview credentials in the .env file.
-```
-USERNAME=<YOUR-USERNAME>
-PASSWORD=<YOUR-PASSWORD>
+
+```bash
+# Create a .env file in the root directory of the repo
+echo "USERNAME=<YOUR-USERNAME>" > .env
+echo "PASSWORD=<YOUR-PASSWORD>" >> .env
 ```
 
-### Step 2: 
+### Step 2
+Edit the `conf.yaml` file to specify which conference you want to scrape, and how to capture the data.
+
+
+### Step 3
 Run the script to log into your account, gather submission info, and print it.
 
-For CVPR 2025, try this:
-```bash
->> python run.py --conf cvpr_2025 --headless
+To find all the conferences that are configured, run:
 
-Opening https://openreview.net/group?id=thecvf.com/CVPR/2025/Conference/Area_Chairs
-Logging in.
-Waiting for page to finish loading...
-Logged in.
-Found 15 submissions.
-1, 1234, To boop or not to boop?, 2, 3
-...
-15, 214, Ursidae are all you need, 4, 4
+```bash
+>> python3 src/run.py --list-conferences
 ```
 
-For ICLR 2025, try this:
-```bash
->> python run.py --conf iclr_2025 --headless
+Then Run the script with the conference name you want to scrape:
 
-Opening https://openreview.net/group?id=ICLR.cc/2025/Conference/Area_Chairs
-Logging in.
-Waiting for page to finish loading...
-Logged in.
-Found 14 submissions.
-1, 1234, Discovering the most boopable snoots, 8, 9, 10, 10
-...
-14, 4321, To boop or not to boop?, 5, 5, 4, 1
+```bash
+
+>> python3 src/run.py --conference <CONFERENCE-NAME>
 ```
 
-Skip `--headless` if you want to watch it do the web navigation.  
-You can skip reviews with the `--skip_reviews` flag.
+You can also run the script with the `--headless` flag to run it in headless mode (no browser window will be opened):
+
+```bash
+>> python3 src/run.py --conference <CONFERENCE-NAME> --headless
+```
