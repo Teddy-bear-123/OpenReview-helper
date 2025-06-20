@@ -1,6 +1,6 @@
 This repo automates the process of logging into OpenReview, gathering submission info, and printing it in a format that you can copy-paste into your tracker spreadsheet.
 
-This repo will render a summary of the papers in your AC batch:
+This repo will render a summary of the papers in your AC / Reviewer dashboard:
 <img src="demo.png" alt="Sample output" width="500"/>
 
 ## Prerequisites
