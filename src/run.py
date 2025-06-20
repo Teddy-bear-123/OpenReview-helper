@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import re
 import secrets
@@ -10,14 +11,50 @@ import numpy as np
 import yaml  # type: ignore
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.logging import RichHandler
+from rich.style import Style
 from rich.table import Table
+from rich.theme import Theme
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.firefox.service import Service
 from tqdm import tqdm
 from utils import int_list_to_str, mean, run_with_timeout, std
 
 TIMEOUT_DURATION = 6
 CONFIG_FILE = "./conf.yaml"
+
+
+def setup_logger(debug: bool = False) -> None:
+    logging_level = logging.DEBUG if debug else logging.INFO
+
+    logging.basicConfig(
+        level=logging_level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[
+            RichHandler(
+                rich_tracebacks=True,
+                show_time=True,
+                show_level=True,
+                show_path=False,
+                markup=True,
+                console=Console(
+                    theme=Theme(
+                        {
+                            "logging.level.debug": Style(color="blue"),
+                            "logging.level.info": Style(color="green"),
+                            "logging.level.warning": Style(color="yellow", bold=True),
+                            "logging.level.error": Style(color="red"),
+                            "logging.level.critical": Style(
+                                color="white", bgcolor="red", bold=True
+                            ),
+                        }
+                    )
+                ),
+            )
+        ],
+    )
 
 
 @dataclass
@@ -28,6 +65,16 @@ class ConferenceConfig:
     rating_config: dict[str, Any]
     confidence_config: dict[str, Any]
     final_rating_config: dict[str, Any]
+
+
+@dataclass
+class BrowserConfig:
+    """Configuration for the browser used by Selenium."""
+
+    firefox_binary: Optional[str] = None
+    geckodriver_path: Optional[str] = None
+    window_size: Optional[tuple[int, int]] = None
+    additional_args: Optional[list[str]] = None
 
 
 @dataclass
@@ -60,6 +107,7 @@ class ConfigLoader:
 
     def __init__(self, config_file: str = CONFIG_FILE):
         self.config_file = config_file
+        self.browser_config: Optional[BrowserConfig] = None
         self.configs = self._load_configs()
 
     def _load_configs(self) -> dict[str, ConferenceConfig]:
@@ -77,6 +125,33 @@ class ConfigLoader:
                 rating_config=conf_data["rating"],
                 confidence_config=conf_data["confidence"],
                 final_rating_config=conf_data["final_rating"],
+            )
+
+        if "browser" in data:
+            print("Here")
+            browser_config = data["browser"]
+            print(browser_config)
+            self.browser_config = BrowserConfig(
+                firefox_binary=(
+                    browser_config["firefox_binary" or None]
+                    if "firefox_binary" in browser_config
+                    else None
+                ),
+                geckodriver_path=(
+                    browser_config["geckodriver_path" or None]
+                    if "geckodriver_path" in browser_config
+                    else None
+                ),
+                window_size=(
+                    tuple(browser_config["window_size"])
+                    if "window_size" in browser_config
+                    else None
+                ),
+                additional_args=(
+                    browser_config["additional_args"]
+                    if "additional_args" in browser_config
+                    else None
+                ),
             )
 
         return configs
@@ -155,11 +230,37 @@ class ORAPI:
         self.conf_config = self.config_loader.get_config(conf)
         self.conf = conf
 
-        # Create webdriver.
+        browser_config = self.config_loader.browser_config or BrowserConfig()
+
+        logging.info(f"Using configuration for conference: {self.conf}")
+
+        logging.debug(f"Browser configuration: {browser_config}")
+
+        service = Service()
         options = webdriver.FirefoxOptions()
+
+        if browser_config.geckodriver_path:
+            service = Service(browser_config.geckodriver_path)
+
+        if browser_config.firefox_binary:
+            logging.debug(f"Using Firefox binary at: {browser_config.firefox_binary}")
+            options.binary_location = browser_config.firefox_binary
+
+        if browser_config.window_size:
+            options.add_argument(f"--width={browser_config.window_size[0]}")
+            options.add_argument(f"--height={browser_config.window_size[1]}")
+
+        if browser_config.additional_args:
+            for arg in browser_config.additional_args:
+                options.add_argument(arg)
+
         if headless:
             options.add_argument("--headless")
-        self.driver = webdriver.Firefox(options=options)
+
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+        self.driver = webdriver.Firefox(options=options, service=service)
 
         self._login(self.conf_config.url)
 
@@ -170,12 +271,20 @@ class ORAPI:
     def _login(self, url: str) -> None:
         # Load username and password.
         load_dotenv()
-        username = os.environ["USERNAME"]
+        username = os.environ["LOGIN"]
         password = os.environ["PASSWORD"]
 
         # Log in and navigate to url.
         print(f"Opening {url}")
         self.driver.get(url)
+        print("Waiting for login page to load...")
+        while True:
+            try:
+                self.driver.find_element(By.ID, "email-input")
+                break
+            except Exception:
+                logging.exception("Waiting for login page to load...")
+                pass
         self.driver.find_element(By.ID, "email-input").send_keys(username)
         self.driver.find_element(By.ID, "password-input").send_keys(password)
         self.driver.find_element(By.CLASS_NAME, "btn-login").click()
@@ -371,6 +480,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List all available conferences and exit",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
 
     args = parser.parse_args()
     return args
@@ -378,6 +492,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.debug:
+        setup_logger(debug=True)
 
     # List conferences if requested
     if args.list_conferences:

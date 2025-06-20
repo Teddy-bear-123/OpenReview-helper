@@ -1,3 +1,9 @@
+browser: # This section is __very__ Optional, If you are on ubuntu / use snap as your package manager You prolly would need to uncomment the gekcodriver_path
+  firefox_path: '/snap/bin/firefox'
+  geckodriver_path: '/snap/bin/firefox.geckodriver'
+  window_size: [1920, 1080]
+  # You could also add additional settings with addtional_settings:
+
 conferences:
   iclr_2025:
     url: 'https://openreview.net/group?id=ICLR.cc/2025/Conference/Area_Chairs'
@@ -15,7 +21,7 @@ conferences:
       extract_method: null
 
   cvpr_2025:
-    url: 'https://openreview.net/group?id=thecvf.com/CVPR/2025/Conference/Area_Chairs'
+    url: 'https://openreview.net/group?id=thecvf.com/CVPR/2025/Conference/Reviewers'
     rating:
       start_text: 'Overall Recommendation: '
       end_text: 'Justification For Recommendation And Suggestions For Rebuttal: '
