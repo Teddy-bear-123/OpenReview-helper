@@ -217,7 +217,11 @@ class TextExtractor:
 
 class ORAPI:
     def __init__(
-        self, conf: str, headless: bool = True, config_file: str = CONFIG_FILE
+        self,
+        conf: str,
+        headless: bool = True,
+        config_file: str = CONFIG_FILE,
+        save_pages: bool = False,
     ):
         """Initializes the OpenReviewAPI.
 
@@ -230,6 +234,7 @@ class ORAPI:
         self.config_loader = ConfigLoader(config_file)
         self.conf_config = self.config_loader.get_config(conf)
         self.conf = conf
+        self.save_pages = save_pages
 
         browser_config = self.config_loader.browser_config or BrowserConfig()
 
@@ -268,6 +273,20 @@ class ORAPI:
     def __del__(self) -> None:
         if hasattr(self, "driver"):
             self.driver.quit()
+
+    def _save_page(self, filename: str) -> None:
+        """Generic function to save current page HTML."""
+        if not self.save_pages:
+            return
+
+        if not hasattr(self, "timestamp_dir"):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.timestamp_dir = f"saved_pages/{timestamp}"
+
+        os.makedirs(self.timestamp_dir, exist_ok=True)
+        filepath = f"{self.timestamp_dir}/{filename}"
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(self.driver.page_source)
 
     def _login(self, url: str) -> None:
         # Load username and password.
@@ -316,6 +335,8 @@ class ORAPI:
         )
         self.paper_urls = urls
 
+        self._save_page("landing_page.html")
+
     def _parse_rating(
         self, reviews: list[Any]
     ) -> tuple[list[int], list[int], list[int]]:
@@ -348,9 +369,7 @@ class ORAPI:
 
         return ratings, confidences, final_ratings
 
-    def load_submission(
-        self, url: str, skip_reviews: bool = False, save_pages: bool = False
-    ) -> Submission:
+    def load_submission(self, url: str, skip_reviews: bool = False) -> Submission:
         """Navigate to submission link and parse info.
 
         Args:
@@ -371,18 +390,10 @@ class ORAPI:
         ).text
         sub_id = content.split("Number:")[1].strip()
 
-        if save_pages:
-            if not hasattr(self, "timestamp_dir"):
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                self.timestamp_dir = f"saved_pages/{timestamp}"
-
-            os.makedirs(self.timestamp_dir, exist_ok=True)
-            safe_title = re.sub(r'[<>:"/\\\\|?*]', "_", title)[:50]
-            filename = f"{self.timestamp_dir}/{sub_id}_{safe_title}.html"
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.driver.page_source)
-
         logging.info(f"Loaded submission: {sub_id} - {title}")
+
+        safe_title = re.sub(r'[<>:"/\\\\|?*]', "_", title)[:50]
+        self._save_page(f"{sub_id}_{safe_title}.html")
 
         # Get replies.
         def load_reviews(driver: webdriver.Firefox) -> list[Any]:
@@ -539,6 +550,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable debug logging",
     )
+    parser.add_argument(
+        "--save_pages",
+        action="store_true",
+        help="Save HTML pages of submissions for debugging purposes",
+    )
 
     args = parser.parse_args()
     return args
@@ -583,7 +599,12 @@ def main() -> None:
             )
     else:
         # Initialize API object and get all info.
-        obj = ORAPI(conf=args.conf, headless=args.headless, config_file=args.config)
+        obj = ORAPI(
+            conf=args.conf,
+            headless=args.headless,
+            config_file=args.config,
+            save_pages=args.save_pages,
+        )
         subs = obj.load_all_submissions(args.skip_reviews)
 
     # Print info.
