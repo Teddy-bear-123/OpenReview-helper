@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import os
 import re
@@ -21,7 +22,7 @@ from selenium.webdriver.firefox.service import Service
 from tqdm import tqdm
 from utils import int_list_to_str, mean, run_with_timeout, std
 
-TIMEOUT_DURATION = 6
+TIMEOUT_DURATION = 120  # The OR website is weird sometimes
 CONFIG_FILE = "./conf.yaml"
 
 
@@ -122,9 +123,9 @@ class ConfigLoader:
         for conf_name, conf_data in data["conferences"].items():
             configs[conf_name] = ConferenceConfig(
                 url=conf_data["url"],
-                rating_config=conf_data["rating"],
-                confidence_config=conf_data["confidence"],
-                final_rating_config=conf_data["final_rating"],
+                rating_config=conf_data.get("rating", {}),
+                confidence_config=conf_data.get("confidence", {}),
+                final_rating_config=conf_data.get("final_rating", {}),
             )
 
         if "browser" in data:
@@ -319,7 +320,9 @@ class ORAPI:
         self, reviews: list[Any]
     ) -> tuple[list[int], list[int], list[int]]:
         """Parse ratings from reviews using configuration."""
-        ratings, final_ratings, confidences = [], [], []
+        ratings: list[int] = []
+        final_ratings: list[int] = []
+        confidences: list[int] = []
 
         for reply in reviews:
             content = reply.text
@@ -334,15 +337,20 @@ class ORAPI:
                 content, self.conf_config.final_rating_config
             )
 
-            if rating is not None and confidence is not None:
-                ratings.append(rating)
-                confidences.append(confidence)
-                if final_rating is not None:
-                    final_ratings.append(final_rating)
+            # Weird workaround to allow any ordering / missing values.
+            for value, target_list in [
+                (rating, ratings),
+                (confidence, confidences),
+                (final_rating, final_ratings),
+            ]:
+                if value is not None:
+                    target_list.append(value)
 
         return ratings, confidences, final_ratings
 
-    def load_submission(self, url: str, skip_reviews: bool = False) -> Submission:
+    def load_submission(
+        self, url: str, skip_reviews: bool = False, save_pages: bool = False
+    ) -> Submission:
         """Navigate to submission link and parse info.
 
         Args:
@@ -362,6 +370,19 @@ class ORAPI:
             By.XPATH, "//div[@class='forum-note']/div[@class='note-content']"
         ).text
         sub_id = content.split("Number:")[1].strip()
+
+        if save_pages:
+            if not hasattr(self, "timestamp_dir"):
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                self.timestamp_dir = f"saved_pages/{timestamp}"
+
+            os.makedirs(self.timestamp_dir, exist_ok=True)
+            safe_title = re.sub(r'[<>:"/\\\\|?*]', "_", title)[:50]
+            filename = f"{self.timestamp_dir}/{sub_id}_{safe_title}.html"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+
+        logging.info(f"Loaded submission: {sub_id} - {title}")
 
         # Get replies.
         def load_reviews(driver: webdriver.Firefox) -> list[Any]:
@@ -399,19 +420,52 @@ class ORAPI:
 
 
 def print_csv(subs: list[Submission]) -> None:
-    """Basic print as CSV."""
-    output = ""
-    max_len = 0
-    for idx, sub in enumerate(subs):
-        line = f"{idx + 1}, {str(sub)}"
-        output += line + "\n"
-        max_len = max(max_len, len(line))
+    """Print as CSV with all fields matching the rich table."""
+    # CSV header
+    header = "#,ID,Title,Ratings,Avg,Std,Confidences,Final Ratings,Final Avg,Final Std"
+    print(header)
 
-    left = (max_len - 5) // 2
-    right = max_len - 5 - left
-    print("-" * left + " CSV " + "-" * right)
-    print(output.rstrip("\n"))
-    print("-" * max_len)
+    # CSV rows
+    for idx, sub in enumerate(subs):
+        row = (
+            f"{idx + 1},"
+            f"{sub.sub_id},"
+            f'"{sub.title}",'  # Quote title in case it contains commas
+            f'"{int_list_to_str(sub.ratings)}",'
+            f"{mean(sub.ratings)},"
+            f"{std(sub.ratings)},"
+            f'"{int_list_to_str(sub.confidences)}",'
+            f'"{int_list_to_str(sub.final_ratings)}",'
+            f"{mean(sub.final_ratings)},"
+            f"{std(sub.final_ratings)}"
+        )
+        print(row)
+
+
+def save_csv(subs: list[Submission], filename: str = "submissions.csv") -> None:
+    """Save submissions as CSV file with all fields matching the rich table."""
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        header = (
+            "#,ID,Title,Ratings,Avg,Std,Confidences,Final Ratings,Final Avg,Final Std"
+        )
+        f.write(header + "\n")
+
+        for idx, sub in enumerate(subs):
+            row = (
+                f"{idx + 1},"
+                f"{sub.sub_id},"
+                f'"{sub.title}",'
+                f'"{int_list_to_str(sub.ratings)}",'
+                f"{mean(sub.ratings)},"
+                f"{std(sub.ratings)},"
+                f'"{int_list_to_str(sub.confidences)}",'
+                f'"{int_list_to_str(sub.final_ratings)}",'
+                f"{mean(sub.final_ratings)},"
+                f"{std(sub.final_ratings)}"
+            )
+            f.write(row + "\n")
+
+    print(f"CSV saved to {filename}")
 
 
 def print_rich(subs: list[Submission]) -> None:
@@ -534,7 +588,7 @@ def main() -> None:
 
     # Print info.
     print_rich(subs)
-    print_csv(subs)
+    save_csv(subs)
 
 
 if __name__ == "__main__":
