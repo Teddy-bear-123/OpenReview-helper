@@ -337,13 +337,15 @@ class ORAPI:
 
         self._save_page("landing_page.html")
 
-    def _parse_rating(
-        self, reviews: list[Any]
-    ) -> tuple[list[int], list[int], list[int]]:
+    def _parse_rating(self) -> tuple[list[int], list[int], list[int]]:
         """Parse ratings from reviews using configuration."""
         ratings: list[int] = []
         final_ratings: list[int] = []
         confidences: list[int] = []
+
+        reviews = self.driver.find_element(By.ID, "forum-replies").find_elements(
+            By.CLASS_NAME, "depth-odd"
+        )
 
         for reply in reviews:
             content = reply.text
@@ -396,28 +398,14 @@ class ORAPI:
         self._save_page(f"{sub_id}_{safe_title}.html")
 
         # Get replies.
-        def load_reviews(driver: webdriver.Firefox) -> list[Any]:
-            while True:
-                # Keep trying until page loads...
-                replies = driver.find_element(By.ID, "forum-replies").find_elements(
-                    By.CLASS_NAME, "depth-odd"
-                )
-                if replies:
-                    break
-            return replies  # type: ignore
-
         if skip_reviews:
-            reviews = []
+            ratings, confidences, final_ratings = [], [], []
         else:
-            reviews = run_with_timeout(
-                load_reviews,
-                (self.driver,),
+            ratings, confidences, final_ratings = run_with_timeout(
+                self._parse_rating,
                 timeout_duration=TIMEOUT_DURATION,
-                default_output=[],
+                default_output=([], [], []),
             )
-
-        # Get ratings and confidences from each valid rating.
-        ratings, confidences, final_ratings = self._parse_rating(reviews)
 
         return Submission(title, sub_id, ratings, confidences, final_ratings)
 
@@ -555,6 +543,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Save HTML pages of submissions for debugging purposes",
     )
+    parser.add_argument(
+        "--csv",
+        type=str,
+        default="submissions.csv",
+        help="Path to save the CSV file",
+    )
 
     args = parser.parse_args()
     return args
@@ -597,8 +591,8 @@ def main() -> None:
                     final_ratings=final_ratings,
                 )
             )
+
     else:
-        # Initialize API object and get all info.
         obj = ORAPI(
             conf=args.conf,
             headless=args.headless,
@@ -607,9 +601,8 @@ def main() -> None:
         )
         subs = obj.load_all_submissions(args.skip_reviews)
 
-    # Print info.
-    print_rich(subs)
-    save_csv(subs)
+        print_rich(subs)
+        save_csv(subs, filename=args.csv)
 
 
 if __name__ == "__main__":
